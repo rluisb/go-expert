@@ -9,10 +9,11 @@ type Product struct {
 	ID    int `gorm:"primaryKey"`
 	Name  string
 	Price float64
+	gorm.Model
 }
 
 func main() {
-	dsn := "root:root@tcp(localhost:3306)/goexpert"
+	dsn := "root:root@tcp(localhost:3306)/goexpert?charset=utf8&parseTime=True&loc=Local"
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 	if err != nil {
 		panic(err)
@@ -73,8 +74,9 @@ func main() {
 	//fmt.Println(productFromQuery)
 
 	//Delete
-	//var product Product
-	//db.First(&product, 1)
-	//db.Delete(&product)
+	//Ao adicionar o gorm.Model se torna um soft delete
+	var product Product
+	db.First(&product, 1)
+	db.Delete(&product)
 
 }
