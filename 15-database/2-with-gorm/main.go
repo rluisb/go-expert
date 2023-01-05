@@ -5,12 +5,27 @@ import (
 	"gorm.io/gorm"
 )
 
+type Category struct {
+	ID       int `gorm:"primaryKey"`
+	Name     string
+	Products []Product
+}
+
 type Product struct {
-	ID    int `gorm:"primaryKey"`
-	Name  string
-	Price float64
+	ID         int `gorm:"primaryKey"`
+	Name       string
+	Price      float64
+	CategoryID int
+	Category   Category
+	//SerialNumber SerialNumber
 	gorm.Model
 }
+
+//type SerialNumber struct {
+//	ID        int `gorm:"primaryKey"`
+//	Number    string
+//	ProductID int
+//}
 
 func main() {
 	dsn := "root:root@tcp(localhost:3306)/goexpert?charset=utf8&parseTime=True&loc=Local"
@@ -18,65 +33,41 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	db.AutoMigrate(&Product{})
+	//db.AutoMigrate(&Product{}, &Category{}, &SerialNumber{})
 
-	//Insert or Create
-	//db.Create(&Product{
-	//	Name:  "Notebook",
-	//	Price: 1000.00,
+	db.AutoMigrate(&Product{}, &Category{})
+	//Create Category
+	category := Category{Name: "Eletronicos"}
+	db.Create(&category)
+
+	// Create Product
+	product := Product{
+		Name:       "Mouse",
+		Price:      1000.00,
+		CategoryID: category.ID,
+	}
+	db.Create(&product)
+
+	//db.Create(&SerialNumber{
+	//	Number:    "123456",
+	//	ProductID: product.ID,
 	//})
 
-	//Insert or create batch
-	//products := []Product{
-	//	{Name: "Mouse", Price: 50.00},
-	//	{Name: "Keyboard", Price: 100.00},
-	//}
-	//
-	//db.Create(products)
-
-	//Select First by id then by name
-	//var product Product
-	//db.First(&product, 4)
-	//fmt.Println(product)
-	//db.First(&product, "name = ?", "Mouse")
-	//fmt.Println(product)
-
-	//Select all
 	//var products []Product
-	//db.Limit(2).Offset(1).Find(&products)
+	//db.Preload("Category").Preload("SerialNumber").Find(&products)
 	//for _, product := range products {
-	//	fmt.Println(product)
-	//}
-	//}
-
-	//select where
-	//var products []Product
-	//db.Where("price > ?", 90).Find(&products)
-	//for _, product := range products {
-	//	fmt.Println(product)
+	//	fmt.Println(product.Name, product.Category.Name, product.SerialNumber.Number)
 	//}
 
-	//select where like
-	//var products []Product
-	//db.Where("name LIKE ?", "%book%").Find(&products)
-	//for _, product := range products {
-	//	fmt.Println(product)
+	//var categories []Category
+	//err = db.Model(&Category{}).Preload("Products").Find(&categories).Error
+	//if err != nil {
+	//	panic(err)
 	//}
-
-	//Update
-	//var product Product
-	//db.First(&product, 1)
-	//product.Name = "New Mouse"
-	//db.Save(&product)
-	//
-	//var productFromQuery Product
-	//db.First(&productFromQuery, 1)
-	//fmt.Println(productFromQuery)
-
-	//Delete
-	//Ao adicionar o gorm.Model se torna um soft delete
-	var product Product
-	db.First(&product, 1)
-	db.Delete(&product)
-
+	//for _, category := range categories {
+	//	fmt.Println(category.Name, ":")
+	//	for _, product := range category.Products {
+	//		println("- ", product.Name, category.Name)
+	//	}
+	//}
 }
