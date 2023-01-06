@@ -1,14 +1,21 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"github.com/google/uuid"
+	_ "github.com/mattn/go-sqlite3"
 	"io"
+	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 )
 
-type DollarQuotation struct {
+type DollarQuotationResponse struct {
 	USDBRL struct {
 		Code       string `json:"code"`
 		CodeIn     string `json:"codein"`
@@ -24,7 +31,8 @@ type DollarQuotation struct {
 	} `json:"USDBRL"`
 }
 
-type DollarQuotationResponse struct {
+type DollarQuotation struct {
+	ID         string    `json:"-"`
 	Code       string    `json:"code"`
 	CodeIn     string    `json:"codeIn"`
 	Name       string    `json:"name"`
@@ -39,51 +47,112 @@ type DollarQuotationResponse struct {
 }
 
 func main() {
-	http.HandleFunc("/cotacao", GetDollarQuotationHandler)
-	http.ListenAndServe(":8080", nil)
-}
-
-func GetDollarQuotationHandler(w http.ResponseWriter, _ *http.Request) {
-	data, err := GetDollarQuotation()
+	ctx := context.Background()
+	createDbFile()
+	db, err := sql.Open("sqlite3", "./dollarQuotation.db")
 	if err != nil {
 		panic(err)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(&DollarQuotationResponse{
-		Code:       data.USDBRL.Code,
-		CodeIn:     data.USDBRL.CodeIn,
-		Name:       data.USDBRL.Name,
-		High:       ConvertStringToFloat(data.USDBRL.High, 64),
-		Low:        ConvertStringToFloat(data.USDBRL.Low, 64),
-		VarBid:     ConvertStringToFloat(data.USDBRL.VarBid, 64),
-		PctChange:  ConvertStringToFloat(data.USDBRL.PctChange, 64),
-		Bid:        ConvertStringToFloat(data.USDBRL.Bid, 64),
-		Ask:        ConvertStringToFloat(data.USDBRL.Ask, 64),
-		Timestamp:  data.USDBRL.Timestamp,
-		CreateDate: ConvertStringToTime(data.USDBRL.CreateDate),
-	})
+	defer db.Close()
+
+	createTable(db)
+
+	http.HandleFunc("/cotacao", GetDollarQuotationHandler(db, ctx))
+	http.ListenAndServe(":8080", nil)
 }
 
-func GetDollarQuotation() (*DollarQuotation, error) {
-	req, err := http.Get("https://economia.awesomeapi.com.br/json/last/USD-BRL")
+func GetDollarQuotationHandler(db *sql.DB, ctx context.Context) func(w http.ResponseWriter, _ *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Request iniciada")
+		defer log.Println("Request finalizada")
+
+		log.Println("Iniciando busca dos dados...")
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		data, err := GetDollarQuotation(ctx, db)
+		if err != nil {
+			json.NewEncoder(w).Encode(err)
+		}
+		json.NewEncoder(w).Encode(data)
+	}
+}
+
+func GetDollarQuotation(ctx context.Context, db *sql.DB) (*DollarQuotation, error) {
+	body, err := FetchDollarQuotation(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer req.Body.Close()
 
-	res, err := io.ReadAll(req.Body)
+	var data DollarQuotationResponse
+	err = json.Unmarshal(body, &data)
 	if err != nil {
 		return nil, err
 	}
 
-	var data DollarQuotation
-	err = json.Unmarshal(res, &data)
+	dollarQuotation := MapQuotationToResponse(&data)
+
+	err = insertDollarQuotation(ctx, db, dollarQuotation)
 	if err != nil {
 		return nil, err
 	}
 
-	return &data, nil
+	return dollarQuotation, nil
+}
+
+func FetchDollarQuotation(ctx context.Context) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(200)*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://economia.awesomeapi.com.br/json/last/USD-BRL", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
+}
+
+func createTable(db *sql.DB) {
+	createQuotationTableScript := `CREATE TABLE IF NOT EXISTS quotation (
+		"id" VARCHAR(500) NOT NULL PRIMARY KEY,		
+		"code" VARCHAR(3),
+		"code_in" VARCHAR(3),
+		"name" VARCHAR(100),
+		"high" REAL,
+		"low" REAL,
+		"var_bid" REAL,
+		"pct_change" REAL,
+		"bid" REAL,
+		"ask" REAL,
+		"timestamp" TEXT,
+		"create_date" TEXT
+	  );`
+
+	log.Println("Criando tabela")
+	statement, err := db.Prepare(createQuotationTableScript)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	statement.Exec()
+	log.Println("Tabela criada")
+}
+
+func insertDollarQuotation(ctx context.Context, db *sql.DB, dollarQuotation *DollarQuotation) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Millisecond)
+	defer cancel()
+	stmt, err := db.Prepare("INSERT INTO quotation(id, code, code_in, name, high, low, var_bid, pct_change, bid, ask, timestamp, create_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	_, err = stmt.ExecContext(ctx, dollarQuotation.ID, dollarQuotation.Code, dollarQuotation.CodeIn, dollarQuotation.Name, dollarQuotation.High, dollarQuotation.Low, dollarQuotation.VarBid, dollarQuotation.PctChange, dollarQuotation.Bid, dollarQuotation.Ask, dollarQuotation.Timestamp, dollarQuotation.CreateDate)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func ConvertStringToTime(value string) time.Time {
@@ -101,4 +170,40 @@ func ConvertStringToFloat(value string, bitSize int) float64 {
 		panic(err)
 	}
 	return converted
+}
+
+func MapQuotationToResponse(dollarQuotation *DollarQuotationResponse) *DollarQuotation {
+	return &DollarQuotation{
+		ID:         uuid.New().String(),
+		Code:       dollarQuotation.USDBRL.Code,
+		CodeIn:     dollarQuotation.USDBRL.CodeIn,
+		Name:       dollarQuotation.USDBRL.Name,
+		High:       ConvertStringToFloat(dollarQuotation.USDBRL.High, 64),
+		Low:        ConvertStringToFloat(dollarQuotation.USDBRL.Low, 64),
+		VarBid:     ConvertStringToFloat(dollarQuotation.USDBRL.VarBid, 64),
+		PctChange:  ConvertStringToFloat(dollarQuotation.USDBRL.PctChange, 64),
+		Bid:        ConvertStringToFloat(dollarQuotation.USDBRL.Bid, 64),
+		Ask:        ConvertStringToFloat(dollarQuotation.USDBRL.Ask, 64),
+		Timestamp:  dollarQuotation.USDBRL.Timestamp,
+		CreateDate: ConvertStringToTime(dollarQuotation.USDBRL.CreateDate),
+	}
+}
+
+func createDbFile() {
+	_, err := os.Stat("./dollarQuotation.db")
+
+	if errors.Is(err, os.ErrNotExist) {
+		log.Println("file does not exist")
+		file, err := os.Create("./dollarQuotation.db")
+
+		defer file.Close()
+
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		log.Println("file created")
+	} else {
+		log.Println("file exists")
+	}
 }
