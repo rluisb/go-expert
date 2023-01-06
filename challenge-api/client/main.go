@@ -12,18 +12,7 @@ import (
 )
 
 type DollarQuotation struct {
-	ID         string    `json:"-"`
-	Code       string    `json:"-"`
-	CodeIn     string    `json:"-"`
-	Name       string    `json:"-"`
-	High       float64   `json:"-"`
-	Low        float64   `json:"-"`
-	VarBid     float64   `json:"-"`
-	PctChange  float64   `json:"-"`
-	Bid        float64   `json:"bid"`
-	Ask        float64   `json:"-"`
-	Timestamp  string    `json:"-"`
-	CreateDate time.Time `json:"-"`
+	Bid float64 `json:"bid"`
 }
 
 func main() {
